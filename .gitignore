@@ -1,0 +1,20 @@
+# Dependency directories
+node_modules/
+
+# Build outputs
+/dist
+/build
+
+# Environment files
+.env
+
+# Editor directories and files
+.vscode/
+*.code-workspace
+
+# System Files
+.DS_Store
+Thumbs.db
+
+# Optional: Ignore specific files that may contain sensitive or personal information
+# /config/*.json
