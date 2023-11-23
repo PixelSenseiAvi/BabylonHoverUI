@@ -1,0 +1,11 @@
+Model Information:
+* title:	EARTH
+* source:	https://sketchfab.com/3d-models/earth-6dc14afe24614769a58d82ea56b1fedc
+* author:	rabbitrabbit389 (https://sketchfab.com/rabbitrabbit389)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "EARTH" (https://sketchfab.com/3d-models/earth-6dc14afe24614769a58d82ea56b1fedc) by rabbitrabbit389 (https://sketchfab.com/rabbitrabbit389) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

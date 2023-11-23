@@ -4,7 +4,7 @@ window.addEventListener('DOMContentLoaded', async function () {
 
     // Object to hold the outline width property
     var settings = {
-        outlineWidth: 1.5, // Default value
+        outlineWidth: 1,
         hoveringOver: '',
         intensity: 0.1
     };
@@ -17,17 +17,19 @@ window.addEventListener('DOMContentLoaded', async function () {
         return new BABYLON.Vector3(randomX, randomY, randomZ);
     }
 
-    const minRange = new BABYLON.Vector3(-5, 0, -5);
-    const maxRange = new BABYLON.Vector3(5, 10, 5);
+    const minRange = new BABYLON.Vector3(-2, 0, -2);
+    const maxRange = new BABYLON.Vector3(2, 0, 2);
 
     // Create dat.GUI instance
     var gui = new dat.GUI();
 
-    var highlightMaterial;
-    var shaderMaterial;
     var camera;
+    var light;
 
-    var meshesToLoad = ['human_skull.glb', 'earth.glb'];
+    var meshesToLoad = ['earth.glb'];
+
+    var shaderMaterial;
+    var highlightMaterial;
 
     var loadMeshes = async function (meshesToLoad, scene) {
         let loadMeshPromises = [];
@@ -54,27 +56,64 @@ window.addEventListener('DOMContentLoaded', async function () {
     var createScene = async function () {
         var scene = new BABYLON.Scene(engine);
 
+        // Create Ground
+        CreateGround();
+
+        //Create Environment
+        // const envTex = new BABYLON.CubeTexture.CreateFromPrefilteredData(
+        //     "./sky.env",
+        //     scene
+        // );
+
+        // scene.environmentTexture = envTex;
+
+        // scene.createDefaultSkybox(envTex, true);
+
+        // scene.environmentIntensity = 0.5;
+
+        // Modify settings using the same approach as in the playground
+        var envHelperOpts = {
+            skyboxColor: new BABYLON.Color3(0, 0, 0)
+        };
+
+        // Create default environment with custom options
+        scene.createDefaultEnvironment(envHelperOpts);
+
+
         gui.add(settings, 'hoveringOver').domElement.style.pointerEvents = 'none'; // Make it non-interactive
 
         // Parameters: alpha, beta, radius, target position, scene
-        camera = new BABYLON.ArcRotateCamera('camera1', 0, Math.PI / 2, 10, new BABYLON.Vector3(0, 0, 0), scene);
+        camera = new BABYLON.ArcRotateCamera('camera1', Math.PI / 2, Math.PI / 4, 10, new BABYLON.Vector3(0, 0, 0), scene);
         camera.attachControl(canvas, true);
 
-        var light = new BABYLON.HemisphericLight('light1', new BABYLON.Vector3(1, 1, 0), scene);
+        // Lock camera position
+        camera.lowerRadiusLimit = 3;
+        camera.upperRadiusLimit = 10;
+        camera.lowerBetaLimit = 0;
+        camera.upperBetaLimit = Math.PI / 3;
+        camera.lowerAlphaLimit = 0;
+        camera.upperAlphaLimit = Math.PI * 3;
+        camera.angularSensibilityX = 1000;
+        camera.angularSensibilityY = 1000;
 
+
+        //camera.inputs.clear(); // Clear all default controls
+
+        light = new BABYLON.HemisphericLight('light1', new BABYLON.Vector3(1, 1, 0), scene);
 
         gui.add(light, 'intensity', 0, 1, 0.01); // Arguments: object, property, min, max, step
 
         // Load Mesh
         var meshes = await loadMeshes(meshesToLoad, scene);
-        meshes.forEach(mesh => {
+        // URL to your texture file
+        //var textureUrl = "./earth/textures/Material.jpeg"; // Replace with your texture file path
 
+        meshes.forEach(mesh => {
             // Set the random position of the mesh
             mesh.position = getRandomVector3(minRange.x, maxRange.x, minRange.y, maxRange.y, minRange.z, maxRange.z);
         });
 
 
-        // Normal Shaders
         const [vertexCode, fragmentCode] = await Promise.all([
             fetch('fresnel.vertex.fx').then(response => response.text()),
             fetch('fresnel.fragment.fx').then(response => response.text())
@@ -85,33 +124,78 @@ window.addEventListener('DOMContentLoaded', async function () {
             fragment: './fresnel',
         }, {
             attributes: ['position', 'normal', 'uv'],
-            uniforms: ['world', 'worldView', 'worldViewProjection', 'view', 'projection', 'cameraPosition', 'useFresnelEffect', 'outlineWidth']
+            uniforms: ['worldViewProjection', 'useFresnelEffect', 'outlineWidth', 'uTexture']
         });
 
         shaderMaterial.vertexCode = vertexCode;
         shaderMaterial.fragmentCode = fragmentCode;
 
-        shaderMaterial.setVector3('cameraPosition', camera.position);
+        var texture = new BABYLON.Texture("./earth/textures/Material.jpeg", scene);
 
-        //Outline
+        shaderMaterial.setTexture('uTexture', texture)
+        shaderMaterial.setInt('useFresnelEffect', 0);
+
         // Add a controller in the GUI for outlineWidth
         var controller = gui.add(settings, 'outlineWidth', 0.1, 8.5, 0.1);
 
         // Listen to changes in the GUI and update the shader material
         controller.onChange(function (value) {
-            // Assuming outlineMaterial is your outline shader material
             shaderMaterial.setFloat('outlineWidth', value);
         });
 
-        // Apply shader material to the mesh
-        shaderMaterial.setFloat('useFresnelEffect', false);
-
-        meshes.forEach(mesh => {
+        meshes.forEach((mesh) => {
             mesh.material = shaderMaterial;
         });
 
+        highlightMaterial = shaderMaterial.clone('highlightMaterial');
+        highlightMaterial.setInt('useFresnelEffect', 1);
+
         return scene;
     };
+
+    var CreateAsphalt = async function () {
+
+        const pbr = new BABYLON.PBRMaterial("pbr", scene);
+        pbr.albedoTexture = new BABYLON.Texture(
+            "./textures/asphalt/asphalt_diffuse.jpg",
+            scene
+        );
+
+        pbr.bumpTexture = new BABYLON.Texture(
+            "./textures/asphalt/asphalt_normal.jpg",
+            scene
+        );
+
+        pbr.invertNormalMapX = true;
+        pbr.invertNormalMapY = true;
+
+        pbr.useAmbientOcclusionFromMetallicTextureRed = true;
+        pbr.useRoughnessFromMetallicTextureGreen = true;
+        pbr.useMetallnessFromMetallicTextureBlue = true;
+
+        pbr.metallicTexture = new BABYLON.Texture(
+            "./textures/asphalt/asphalt_ao_rough_metal.jpg",
+            scene
+        );
+
+        return pbr;
+
+    }
+
+
+    var CreateGround = async function () {
+        const ground = new BABYLON.MeshBuilder.CreateGround(
+            "ground",
+            { width: 10, height: 10 },
+            scene
+        );
+
+        ground.isPickable = false;
+        var groundMaterial = await CreateAsphalt();
+        groundMaterial.backFaceCulling = false;
+        ground.material = groundMaterial;
+    }
+
 
     var scene = await createScene();
 
@@ -126,39 +210,40 @@ window.addEventListener('DOMContentLoaded', async function () {
     canvas.addEventListener('pointermove', function (evt) {
         var pickResult = scene.pick(scene.pointerX, scene.pointerY);
 
-        if (pickResult.hit) {
+        if (pickResult.hit && meshesToLoad.includes(pickResult.pickedMesh.name)) {
             var pickedMesh = pickResult.pickedMesh;
 
-            // Highlight the picked mesh
-            highlightMaterial = shaderMaterial.clone('highlightMaterial'); // Clone to avoid shared material issues
-            highlightMaterial.setFloat('useFresnelEffect', true);
-            pickedMesh.material = highlightMaterial;
-
-            // Reset the previously highlighted mesh, if it's different
-            if (previouslyHighlightedMesh && previouslyHighlightedMesh !== pickedMesh) {
-                // Reset the material of the previously highlighted mesh
-                // This assumes you have a defaultMaterial or original material to set it back to
-                previouslyHighlightedMesh.material = shaderMaterial;
+            // Apply highlight material to the currently picked mesh
+            if (previouslyHighlightedMesh !== pickedMesh) {
+                if (previouslyHighlightedMesh) {
+                    previouslyHighlightedMesh.material = shaderMaterial;
+                }
+                pickedMesh.material = highlightMaterial;
+                previouslyHighlightedMesh = pickedMesh;
             }
-
-            previouslyHighlightedMesh = pickedMesh; // Update the reference
 
             updateUIHoverOver(pickedMesh.name);
         } else {
             // Reset when no mesh is hovered
             if (previouslyHighlightedMesh) {
-                previouslyHighlightedMesh.material = shaderMaterial; // Reset the material
+                previouslyHighlightedMesh.material = shaderMaterial;
                 previouslyHighlightedMesh = null;
             }
-
             updateUIHoverOver('null');
         }
     });
 
 
+    // Add an event listener for the 'contextmenu' event
+    canvas.addEventListener('contextmenu', function (event) {
+        event.preventDefault(); // Prevents the default right-click menu
+    });
+
     engine.runRenderLoop(() => {
         if (scene) {
-            shaderMaterial.setVector3('cameraPosition', camera.position);
+            if (shaderMaterial) {
+                shaderMaterial.setVector3("cameraPosition", camera.position);
+            }
             scene.render();
         }
     });
