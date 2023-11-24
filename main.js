@@ -2,11 +2,15 @@ window.addEventListener('DOMContentLoaded', async function () {
     var canvas = document.getElementById('renderCanvas');
     var engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
 
+    var canvasWidth = engine.getRenderWidth();
+    var canvasHeight = engine.getRenderHeight();
+
     // Object to hold the outline width property
     var settings = {
         outlineWidth: 1,
         hoveringOver: '',
-        intensity: 0.1
+        intensity: 0.1,
+        outlineColor: "#ffae23",
     };
 
     function getRandomVector3(minX, maxX, minY, maxY, minZ, maxZ) {
@@ -26,10 +30,13 @@ window.addEventListener('DOMContentLoaded', async function () {
     var camera;
     var light;
 
-    var meshesToLoad = ['earth.glb'];
+    var meshesToLoad = ['sphere.glb'];
 
-    var shaderMaterial;
-    var highlightMaterial;
+    var standardMaterial;
+
+    var renderTarget;
+    var outlinePostProcessUniforms;
+    var findSurfacesUniforms;
 
     var loadMeshes = async function (meshesToLoad, scene) {
         let loadMeshPromises = [];
@@ -52,24 +59,22 @@ window.addEventListener('DOMContentLoaded', async function () {
         return loadedMeshArrays.flat();
     }
 
+    function updatePostProcessTexturesForMesh(mesh) {
+        if (mesh) {
+
+            findSurfacesUniforms['modelViewMatrix'] = mesh.getWorldMatrix().multiply(camera.getProjectionMatrix());
+
+            outlinePostProcessUniforms['sceneColorBuffer'] = mesh.sceneColorTexture;
+            outlinePostProcessUniforms['depthBuffer'] = mesh.depthTexture;
+            outlinePostProcessUniforms['surfaceBuffer'] = mesh.surfaceBuffer;
+        }
+    }
 
     var createScene = async function () {
         var scene = new BABYLON.Scene(engine);
 
         // Create Ground
         CreateGround();
-
-        //Create Environment
-        // const envTex = new BABYLON.CubeTexture.CreateFromPrefilteredData(
-        //     "./sky.env",
-        //     scene
-        // );
-
-        // scene.environmentTexture = envTex;
-
-        // scene.createDefaultSkybox(envTex, true);
-
-        // scene.environmentIntensity = 0.5;
 
         // Modify settings using the same approach as in the playground
         var envHelperOpts = {
@@ -97,8 +102,6 @@ window.addEventListener('DOMContentLoaded', async function () {
         camera.angularSensibilityY = 1000;
 
 
-        //camera.inputs.clear(); // Clear all default controls
-
         light = new BABYLON.HemisphericLight('light1', new BABYLON.Vector3(1, 1, 0), scene);
 
         gui.add(light, 'intensity', 0, 1, 0.01); // Arguments: object, property, min, max, step
@@ -106,49 +109,94 @@ window.addEventListener('DOMContentLoaded', async function () {
         // Load Mesh
         var meshes = await loadMeshes(meshesToLoad, scene);
         // URL to your texture file
-        //var textureUrl = "./earth/textures/Material.jpeg"; // Replace with your texture file path
 
         meshes.forEach(mesh => {
             // Set the random position of the mesh
             mesh.position = getRandomVector3(minRange.x, maxRange.x, minRange.y, maxRange.y, minRange.z, maxRange.z);
+            mesh.useVertexColors = true;
+            mesh.useVertexAlpha = true;
         });
 
+        async function loadShader(shaderUrl) {
+            const response = await fetch(shaderUrl);
+            const shaderCode = await response.text();
+            return shaderCode;
+        }
 
-        const [vertexCode, fragmentCode] = await Promise.all([
-            fetch('fresnel.vertex.fx').then(response => response.text()),
-            fetch('fresnel.fragment.fx').then(response => response.text())
-        ]);
+        // Load shaders and create post-process
+        async function createPostProcess(vertexShaderPath, fragmentShaderPath, _prefix, uniformDict) {
+            const vertexShaderCode = await loadShader(vertexShaderPath);
+            const fragmentShaderCode = await loadShader(fragmentShaderPath);
 
-        shaderMaterial = new BABYLON.ShaderMaterial('shader', scene, {
-            vertex: './fresnel',
-            fragment: './fresnel',
-        }, {
-            attributes: ['position', 'normal', 'uv'],
-            uniforms: ['worldViewProjection', 'useFresnelEffect', 'outlineWidth', 'uTexture']
-        });
+            BABYLON.Effect.ShadersStore[_prefix + 'VertexShader'] = vertexShaderCode;
+            BABYLON.Effect.ShadersStore[_prefix + 'FragmentShader'] = fragmentShaderCode;
 
-        shaderMaterial.vertexCode = vertexCode;
-        shaderMaterial.fragmentCode = fragmentCode;
+            var postProcess = new BABYLON.PostProcess(_prefix, _prefix, Object.keys(uniformDict), null, 1.0, camera);
+            postProcess.onApply = function (effect) {
+                for (const [key, value] of Object.entries(uniformDict)) {
+                    if (typeof value === 'number') {
+                        effect.setFloat(key, value);
+                    } else if (value instanceof BABYLON.Vector3) {
+                        effect.setVector3(key, value);
+                    } else if (value instanceof BABYLON.Vector2) {
+                        effect.setVector2(key, value);
+                    } else if (value instanceof BABYLON.Vector4) {
+                        effect.setVector4(key, value);
+                    } else if (value instanceof BABYLON.Texture) {
+                        effect.setTexture(key, value);
+                    } else if (value instanceof BABYLON.Matrix) {
+                        effect.setMatrix(key, value);
+                    } else if (value instanceof BABYLON.Color3) {
+                        effect.setColor3(key, value);
+                    } else{
+                        console.log('Define a set for this type: ' + typeof value + ' for ' + key);
+                    }
+                    // Add other types as needed
+                }
+            };
 
-        var texture = new BABYLON.Texture("./earth/textures/Material.jpeg", scene);
+            return postProcess;
+        }
 
-        shaderMaterial.setTexture('uTexture', texture)
-        shaderMaterial.setInt('useFresnelEffect', 0);
+        var vFindSurfacesShader = 'findSurfaces.vertex.fx';
+        var fFindSurfacesShader = 'findSurfaces.fragment.fx';
 
-        // Add a controller in the GUI for outlineWidth
-        var controller = gui.add(settings, 'outlineWidth', 0.1, 8.5, 0.1);
+        // Uniforms
+        findSurfacesUniforms = {
+            'maxSurfaceId': 1,
+            'modelViewMatrix': camera.getProjectionMatrix(),
+        };
+        var postProcess1 = await createPostProcess(vFindSurfacesShader, fFindSurfacesShader, 'findSurfaces', findSurfacesUniforms);
 
-        // Listen to changes in the GUI and update the shader material
-        controller.onChange(function (value) {
-            shaderMaterial.setFloat('outlineWidth', value);
-        });
+        var vOutlineShader = 'outline.vertex.fx';
+        var fOutlineShader = 'outline.fragment.fx';
+
+        outlinePostProcessUniforms = {
+            'outlineWidth': settings.outlineWidth,
+
+            'cameraNear': camera.minZ,
+            'cameraFar': camera.maxZ,
+            'outlineColor': new BABYLON.Color3.FromHexString(settings.outlineColor), //TODO: check for this. It should be vec3
+            'screenSize': new BABYLON.Vector4(canvasWidth, canvasHeight, 1.0 / canvasWidth, 1.0 / canvasHeight),
+            'multiplierParameters': new BABYLON.Vector2(0.9, 20),
+            'viewMatrix': camera.getViewMatrix(),
+
+        };
+
+        var postProcess2 = await createPostProcess(vOutlineShader, fOutlineShader, 'outline', outlinePostProcessUniforms);
+
+
+        renderTarget = new BABYLON.RenderTargetTexture("renderTarget", { width: 1024, height: 1024 }, scene);
+        scene.customRenderTargets.push(renderTarget);
+        renderTarget.addPostProcess(postProcess1);
+        renderTarget.addPostProcess(postProcess2);
+
+        standardMaterial = new BABYLON.StandardMaterial("outputMaterial", scene);
+        standardMaterial.emissiveTexture = renderTarget;
 
         meshes.forEach((mesh) => {
-            mesh.material = shaderMaterial;
+            mesh.material = standardMaterial;
         });
-
-        highlightMaterial = shaderMaterial.clone('highlightMaterial');
-        highlightMaterial.setInt('useFresnelEffect', 1);
 
         return scene;
     };
@@ -216,9 +264,11 @@ window.addEventListener('DOMContentLoaded', async function () {
             // Apply highlight material to the currently picked mesh
             if (previouslyHighlightedMesh !== pickedMesh) {
                 if (previouslyHighlightedMesh) {
-                    previouslyHighlightedMesh.material = shaderMaterial;
+                    updatePostProcessTexturesForMesh(pickedMesh);
+                    renderTarget.renderList.splice(renderTarget.renderList.indexOf(previouslyHighlightedMesh), 1);
                 }
-                pickedMesh.material = highlightMaterial;
+
+                renderTarget.renderList.push(pickedMesh);
                 previouslyHighlightedMesh = pickedMesh;
             }
 
@@ -226,13 +276,20 @@ window.addEventListener('DOMContentLoaded', async function () {
         } else {
             // Reset when no mesh is hovered
             if (previouslyHighlightedMesh) {
-                previouslyHighlightedMesh.material = shaderMaterial;
+                renderTarget.renderList.splice(renderTarget.renderList.indexOf(previouslyHighlightedMesh), 1);
                 previouslyHighlightedMesh = null;
             }
             updateUIHoverOver('null');
+            renderTarget.clearPostProcesses();
         }
     });
 
+    canvas.addEventListener('resize', function () {
+        engine.resize();
+        var newWidth = engine.getRenderWidth();
+        var newHeight = engine.getRenderHeight();
+        outlinePostProcessUniforms["screenSize"] = new BABYLON.Vector4(newWidth, newHeight, 1.0 / newWidth, 1.0 / newHeight);
+    });
 
     // Add an event listener for the 'contextmenu' event
     canvas.addEventListener('contextmenu', function (event) {
@@ -241,9 +298,6 @@ window.addEventListener('DOMContentLoaded', async function () {
 
     engine.runRenderLoop(() => {
         if (scene) {
-            if (shaderMaterial) {
-                shaderMaterial.setVector3("cameraPosition", camera.position);
-            }
             scene.render();
         }
     });
