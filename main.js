@@ -63,6 +63,8 @@ window.addEventListener('DOMContentLoaded', async function () {
         if (mesh) {
 
             findSurfacesUniforms['modelViewMatrix'] = mesh.getWorldMatrix().multiply(camera.getProjectionMatrix());
+            var fixedColor = new BABYLON.Color4(1.0, 0.0, 0.0, 1.0);
+            findSurfacesUniforms['vColor'] = fixedColor;
 
             outlinePostProcessUniforms['sceneColorBuffer'] = mesh.sceneColorTexture;
             outlinePostProcessUniforms['depthBuffer'] = mesh.depthTexture;
@@ -131,8 +133,12 @@ window.addEventListener('DOMContentLoaded', async function () {
             BABYLON.Effect.ShadersStore[_prefix + 'VertexShader'] = vertexShaderCode;
             BABYLON.Effect.ShadersStore[_prefix + 'FragmentShader'] = fragmentShaderCode;
 
-            var postProcess = new BABYLON.PostProcess(_prefix, _prefix, Object.keys(uniformDict), null, 1.0, camera);
+            var postProcess = new BABYLON.PostProcess(_prefix, './' + _prefix, Object.keys(uniformDict), null, 1.0, camera);
             postProcess.onApply = function (effect) {
+
+                //effect.ShadersStore[_prefix + 'VertexShader'] = vertexShaderCode;
+                //effect.ShadersStore[_prefix + 'FragmentShader'] = fragmentShaderCode;
+
                 for (const [key, value] of Object.entries(uniformDict)) {
                     if (typeof value === 'number') {
                         effect.setFloat(key, value);
@@ -148,7 +154,7 @@ window.addEventListener('DOMContentLoaded', async function () {
                         effect.setMatrix(key, value);
                     } else if (value instanceof BABYLON.Color3) {
                         effect.setColor3(key, value);
-                    } else{
+                    } else {
                         console.log('Define a set for this type: ' + typeof value + ' for ' + key);
                     }
                     // Add other types as needed
@@ -185,18 +191,17 @@ window.addEventListener('DOMContentLoaded', async function () {
 
         var postProcess2 = await createPostProcess(vOutlineShader, fOutlineShader, 'outline', outlinePostProcessUniforms);
 
-
         renderTarget = new BABYLON.RenderTargetTexture("renderTarget", { width: 1024, height: 1024 }, scene);
         scene.customRenderTargets.push(renderTarget);
         renderTarget.addPostProcess(postProcess1);
         renderTarget.addPostProcess(postProcess2);
 
         standardMaterial = new BABYLON.StandardMaterial("outputMaterial", scene);
-        standardMaterial.emissiveTexture = renderTarget;
+        standardMaterial.emissiveTexture = renderTarget; 
 
-        meshes.forEach((mesh) => {
-            mesh.material = standardMaterial;
-        });
+        // meshes.forEach((mesh) => {
+        //     //mesh.material = standardMaterial;
+        // });
 
         return scene;
     };
@@ -257,32 +262,36 @@ window.addEventListener('DOMContentLoaded', async function () {
     var previouslyHighlightedMesh = null;
     canvas.addEventListener('pointermove', function (evt) {
         var pickResult = scene.pick(scene.pointerX, scene.pointerY);
-
+    
         if (pickResult.hit && meshesToLoad.includes(pickResult.pickedMesh.name)) {
             var pickedMesh = pickResult.pickedMesh;
-
-            // Apply highlight material to the currently picked mesh
+    
             if (previouslyHighlightedMesh !== pickedMesh) {
                 if (previouslyHighlightedMesh) {
-                    updatePostProcessTexturesForMesh(pickedMesh);
+                    // Reset the material of the previously highlighted mesh
+                    previouslyHighlightedMesh.material = new BABYLON.StandardMaterial("originalMaterial", scene);
                     renderTarget.renderList.splice(renderTarget.renderList.indexOf(previouslyHighlightedMesh), 1);
                 }
-
+    
+                // Apply highlight material to the currently picked mesh
+                pickedMesh.material = standardMaterial;
                 renderTarget.renderList.push(pickedMesh);
                 previouslyHighlightedMesh = pickedMesh;
             }
-
+    
             updateUIHoverOver(pickedMesh.name);
         } else {
             // Reset when no mesh is hovered
             if (previouslyHighlightedMesh) {
+                previouslyHighlightedMesh.material = new BABYLON.StandardMaterial("originalMaterial", scene);
                 renderTarget.renderList.splice(renderTarget.renderList.indexOf(previouslyHighlightedMesh), 1);
                 previouslyHighlightedMesh = null;
             }
+    
             updateUIHoverOver('null');
-            renderTarget.clearPostProcesses();
+            //renderTarget.clearPostProcesses();
         }
-    });
+    });    
 
     canvas.addEventListener('resize', function () {
         engine.resize();
